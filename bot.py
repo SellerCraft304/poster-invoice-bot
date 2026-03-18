@@ -282,8 +282,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "👋 Привет! Я вношу накладные в Poster POS.\n\n"
         "📸 Пришли фото накладной — распознаю и создам приход.\n\n"
+        "/refresh — обновить список ингредиентов из Poster\n"
         "/cancel — отмена"
     )
+    return WAITING_PHOTO
+
+
+async def refresh_ingredients(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Force-reload ingredients from Poster and show count."""
+    msg = await update.message.reply_text("🔄 Обновляю список ингредиентов из Poster...")
+    try:
+        ingredients = poster.get_ingredients()
+        suppliers   = poster.get_suppliers()
+        # Cache in application context for quick access (optional warm-up)
+        context.bot_data["ingredients"] = ingredients
+        context.bot_data["suppliers"]   = suppliers
+        await msg.edit_text(
+            f"✅ Обновлено!\n\n"
+            f"🥦 Ингредиентов: {len(ingredients)}\n"
+            f"🏭 Поставщиков: {len(suppliers)}\n\n"
+            f"Пришли фото накладной."
+        )
+    except Exception as e:
+        await msg.edit_text(f"❌ Ошибка Poster API:\n{e}")
     return WAITING_PHOTO
 
 
@@ -410,9 +431,13 @@ async def select_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["awaiting_manual_supplier"] = True
         return SELECTING_SUPPLIER
 
-    sup_id    = int(data.split(":")[1])
+    sup_id    = data.split(":")[1]  # keep as string for safe comparison
     suppliers = context.user_data["suppliers"]
-    supplier  = next((s for s in suppliers if s["id"] == sup_id), None)
+    supplier  = next((s for s in suppliers if str(s["id"]) == sup_id), None)
+    if not supplier:
+        await query.edit_message_text("❌ Поставщик не найден. Попробуй снова.")
+        await _show_supplier_step(update, context)
+        return SELECTING_SUPPLIER
     context.user_data["selected_supplier"] = supplier
 
     storages = context.user_data["storages"]
@@ -470,9 +495,9 @@ async def manual_supplier_text(update: Update, context: ContextTypes.DEFAULT_TYP
 async def select_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    storage_id = int(query.data.split(":")[1])
+    storage_id = query.data.split(":")[1]  # keep as string
     storages   = context.user_data["storages"]
-    storage    = next((s for s in storages if s["id"] == storage_id), None)
+    storage    = next((s for s in storages if str(s["id"]) == storage_id), None)
     context.user_data["selected_storage"] = storage
 
     supplier      = context.user_data["selected_supplier"]
@@ -578,6 +603,7 @@ def main():
         per_message=False,
         entry_points=[
             CommandHandler("start", start),
+            CommandHandler("refresh", refresh_ingredients),
             MessageHandler(filters.PHOTO, handle_photo),
             MessageHandler(filters.Document.IMAGE | filters.Document.MimeType("application/pdf"), handle_document),
         ],
