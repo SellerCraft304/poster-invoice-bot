@@ -129,16 +129,59 @@ def extract_invoice(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     return json.loads(text)
 
 
+def _keyword_match(original_name: str, ingredients: list[dict]) -> Optional[dict]:
+    """
+    Fast keyword match: find Turkish keyword (after '/') in ingredient name
+    and check if it appears in the invoice original_name.
+    Example: ingredient "Рис обычный / PİRİNÇ" matches "PİRİNÇ YASEMİN 1KG"
+    """
+    if not original_name:
+        return None
+    orig_upper = original_name.upper()
+
+    best = None
+    best_len = 0
+    for ing in ingredients:
+        name = ing["name"]
+        if " / " not in name:
+            continue
+        # Extract all Turkish keywords (part after '/')
+        turkish_part = name.split(" / ", 1)[1].upper()
+        # Use only the first meaningful word (skip numbers/sizes)
+        keywords = [w for w in turkish_part.split() if len(w) >= 3 and not w.replace(".", "").isdigit()]
+        for kw in keywords:
+            if kw in orig_upper and len(kw) > best_len:
+                best = ing
+                best_len = len(kw)
+    return best
+
+
 def semantic_match_all(items: list[dict], ingredients: list[dict]) -> list[Optional[dict]]:
     """
-    Use Claude to semantically match all invoice items to Poster ingredients.
-    Returns a list of matched ingredient dicts (or None) — one per item.
-    This is the PRIMARY matching method: accurate, context-aware, handles synonyms.
+    Match invoice items to Poster ingredients.
+    Step 1: Fast keyword match using Turkish names in ingredient (e.g. "Рис / PİRİNÇ")
+    Step 2: Claude semantic match for remaining unmatched items.
     """
     if not items or not ingredients:
         return [None] * len(items)
 
-    prompt = build_match_prompt(items, ingredients)
+    # Step 1: keyword match via Turkish aliases
+    results = []
+    unmatched_indices = []
+    for i, item in enumerate(items):
+        orig = item.get("original_name", "")
+        match = _keyword_match(orig, ingredients)
+        results.append(match)
+        if match is None:
+            unmatched_indices.append(i)
+
+    if not unmatched_indices:
+        logger.info("All items matched via keyword — skipping Claude")
+        return results
+
+    # Step 2: Claude for remaining items
+    remaining_items = [items[i] for i in unmatched_indices]
+    prompt = build_match_prompt(remaining_items, ingredients)
 
     try:
         message = client.messages.create(
@@ -152,12 +195,14 @@ def semantic_match_all(items: list[dict], ingredients: list[dict]) -> list[Optio
             lines = text.split("\n")
             text = "\n".join(lines[1:-1])
 
-        results = json.loads(text)
+        claude_results = json.loads(text)
 
     except Exception as e:
         logger.error(f"Semantic match failed: {e}")
-        # Fall back to fuzzy if Claude fails
-        return [match_ingredient_fuzzy(it["name"], ingredients) for it in items]
+        # Fall back to fuzzy for unmatched items only
+        for orig_i in unmatched_indices:
+            results[orig_i] = match_ingredient_fuzzy(items[orig_i]["name"], ingredients)
+        return results
 
     # Build lookup: id → ingredient (handle both int and str ids)
     ing_by_id = {}
@@ -165,18 +210,17 @@ def semantic_match_all(items: list[dict], ingredients: list[dict]) -> list[Optio
         ing_by_id[ing["id"]] = ing
         ing_by_id[str(ing["id"])] = ing
 
-    matched = []
-    result_by_idx = {r["idx"]: r for r in results}
-    for i in range(len(items)):
-        r = result_by_idx.get(i, {})
+    # Map Claude results back to original indices
+    claude_result_by_local_idx = {r["idx"]: r for r in claude_results}
+    for local_i, orig_i in enumerate(unmatched_indices):
+        r = claude_result_by_local_idx.get(local_i, {})
         ing_id = r.get("ingredient_id")
         if ing_id is not None:
             found = ing_by_id.get(ing_id) or ing_by_id.get(str(ing_id))
-            matched.append(found)
-        else:
-            matched.append(None)
+            results[orig_i] = found
+        # else results[orig_i] stays None
 
-    return matched
+    return results
 
 
 def get_top_candidates(name: str, ingredients: list[dict], n: int = 8) -> list[dict]:
