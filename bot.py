@@ -49,14 +49,21 @@ def format_items_preview(matched_items: list[dict]) -> str:
     lines = []
     for it in matched_items:
         raw = it["raw_name"]
+        ru = it.get("ru_name", raw)
         matched = it.get("matched_name", "❓ не найден")
         qty = it["quantity"]
         unit = it["unit"]
         price = it["price_per_unit"]
         if it.get("ingredient_id"):
-            lines.append(f"✅ {matched} ({raw}) — {qty} {unit} × {price}")
+            if ru != raw:
+                lines.append(f"✅ {matched} [{ru} / {raw}] — {qty} {unit} × {price}")
+            else:
+                lines.append(f"✅ {matched} ({raw}) — {qty} {unit} × {price}")
         else:
-            lines.append(f"❓ {raw} — {qty} {unit} × {price} [не найден в Poster]")
+            if ru != raw:
+                lines.append(f"❓ {ru} / {raw} — {qty} {unit} × {price} [не найден в Poster]")
+            else:
+                lines.append(f"❓ {raw} — {qty} {unit} × {price} [не найден в Poster]")
     return "\n".join(lines)
 
 
@@ -126,9 +133,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     raw_items = extracted.get("items", [])
     matched_items = []
     for it in raw_items:
-        match = vision.match_ingredient(it["name"], ingredients)
+        ru_name = it["name"]  # already translated to Russian by Claude
+        original_name = it.get("original_name", ru_name)
+        match = vision.match_ingredient(ru_name, ingredients)
         matched_items.append({
-            "raw_name": it["name"],
+            "raw_name": original_name,
+            "ru_name": ru_name,
             "matched_name": match["name"] if match else None,
             "ingredient_id": match["id"] if match else None,
             "quantity": it.get("quantity", 1),
@@ -197,9 +207,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     raw_items = extracted.get("items", [])
     matched_items = []
     for it in raw_items:
-        match = vision.match_ingredient(it["name"], ingredients)
+        ru_name = it["name"]
+        original_name = it.get("original_name", ru_name)
+        match = vision.match_ingredient(ru_name, ingredients)
         matched_items.append({
-            "raw_name": it["name"],
+            "raw_name": original_name,
+            "ru_name": ru_name,
             "matched_name": match["name"] if match else None,
             "ingredient_id": match["id"] if match else None,
             "quantity": it.get("quantity", 1),
