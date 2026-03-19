@@ -75,8 +75,8 @@ def build_match_prompt(items: list[dict], ingredients: list[dict]) -> str:
    - "Майонез 640г Bolbol" → "Майонез" ✅  (один и тот же продукт, бренд/граммовка не важны)
    - "Рис жасмин 1кг" → "Рис обычный" ✅  (это рис, сорт жасмин — вариация риса)
    - "Дрожжи 4×42г" → "Дрожжи" ✅
-   - "Тростовый сыр" → "Сыр для суши" ✅  (похожий вид сыра)
-   - "Сыр кашар" → "Сыр для суши" или "Сыр Чеддер" ✅ если подходит по типу
+   - "Сыр тостовый" → "Сыр тостовый" ✅  (точное совпадение)
+   - "Сыр кашар" → "Сыр кашар" ✅  (точное совпадение)
 
 2. ОБЯЗАТЕЛЬНО null ЕСЛИ:
    - Продукт принципиально другого типа (пакет, мешок, упаковочный материал — не еда)
@@ -124,7 +124,8 @@ def extract_invoice(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     text = message.content[0].text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        text = "\n".join(lines[1:-1])
+        # Strip opening ```json / ``` line and closing ``` line
+        text = "\n".join(lines[1:-1]).strip()
 
     return json.loads(text)
 
@@ -193,7 +194,7 @@ def semantic_match_all(items: list[dict], ingredients: list[dict]) -> list[Optio
         text = message.content[0].text.strip()
         if text.startswith("```"):
             lines = text.split("\n")
-            text = "\n".join(lines[1:-1])
+            text = "\n".join(lines[1:-1]).strip()
 
         claude_results = json.loads(text)
 

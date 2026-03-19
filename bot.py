@@ -24,6 +24,20 @@ import vision
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
+# ─── Auth ───────────────────────────────────────────────────────────────────────
+# Set ALLOWED_USERS env var as comma-separated Telegram user IDs, e.g. "123456,789012"
+# If empty — bot is open to everyone (not recommended for production)
+_raw_ids = os.environ.get("ALLOWED_USERS", "")
+ALLOWED_USER_IDS: set[int] = {int(x.strip()) for x in _raw_ids.split(",") if x.strip().isdigit()}
+
+
+def _is_allowed(update: Update) -> bool:
+    if not ALLOWED_USER_IDS:
+        return True
+    user = update.effective_user
+    return user is not None and user.id in ALLOWED_USER_IDS
+
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -279,6 +293,9 @@ async def _show_current_fix(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 # ─── Handlers ──────────────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not _is_allowed(update):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
     await update.message.reply_text(
         "👋 Привет! Я вношу накладные в Poster POS.\n\n"
         "📸 Пришли фото накладной — распознаю и создам приход.\n\n"
@@ -290,6 +307,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def refresh_ingredients(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Force-reload ingredients from Poster and show count."""
+    if not _is_allowed(update):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
     msg = await update.message.reply_text("🔄 Обновляю список ингредиентов из Poster...")
     try:
         ingredients = poster.get_ingredients()
@@ -309,6 +329,9 @@ async def refresh_ingredients(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not _is_allowed(update):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
     msg = await update.message.reply_text("⏳ Обрабатываю...")
     photo = update.message.photo[-1]
     file  = await context.bot.get_file(photo.file_id)
@@ -318,6 +341,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not _is_allowed(update):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
     doc  = update.message.document
     mime = doc.mime_type or "image/jpeg"
     if "image" not in mime and "pdf" not in mime:
@@ -349,8 +375,13 @@ async def fix_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return SELECTING_SUPPLIER
 
     # fix:{item_idx}:{action}
-    item_idx = int(parts[1])
-    action   = parts[2]
+    try:
+        item_idx = int(parts[1])
+        action   = parts[2]
+    except (IndexError, ValueError):
+        logger.warning(f"Malformed fix callback: {data}")
+        await query.answer("Ошибка, попробуй снова.")
+        return FIXING_UNMATCHED
     items    = context.user_data["matched_items"]
     ings     = context.user_data["ingredients"]
 
@@ -498,6 +529,13 @@ async def select_storage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     storage_id = query.data.split(":")[1]  # keep as string
     storages   = context.user_data["storages"]
     storage    = next((s for s in storages if str(s["id"]) == storage_id), None)
+    if not storage:
+        await query.answer("❌ Склад не найден, попробуй снова.", show_alert=True)
+        await query.edit_message_text(
+            "❌ Склад не найден. Выбери снова:",
+            reply_markup=build_storage_keyboard(storages),
+        )
+        return SELECTING_STORAGE
     context.user_data["selected_storage"] = storage
 
     supplier      = context.user_data["selected_supplier"]
