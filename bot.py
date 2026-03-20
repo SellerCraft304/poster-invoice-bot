@@ -1,11 +1,15 @@
 """
 Poster POS Invoice Bot — v2
 Семантический матчинг через Claude + ручное сопоставление + кэш + поиск поставщика
+WhatsApp Catalog webhook → Poster incomingOrders
 """
 
+import asyncio
 import logging
 import os
 from io import BytesIO
+
+from aiohttp import web
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -21,6 +25,7 @@ from telegram.ext import (
 import cache
 import poster
 import vision
+import whatsapp as wa_webhook
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
@@ -635,7 +640,9 @@ async def unknown_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 # ─── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    port = int(os.environ.get("PORT", 8080))
+
+    tg_app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     conv = ConversationHandler(
         per_message=False,
@@ -677,10 +684,33 @@ def main():
             MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_text),
         ],
     )
+    tg_app.add_handler(conv)
 
-    app.add_handler(conv)
-    logger.info("🤖 Poster Invoice Bot v2 запущен...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    async def run_all():
+        # ── Start aiohttp webhook server ──────────────────────────────────────
+        wa_app  = wa_webhook.create_app()
+        runner  = web.AppRunner(wa_app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logger.info(f"🌐 WhatsApp webhook listening on port {port} (/whatsapp)")
+
+        # ── Start Telegram bot ────────────────────────────────────────────────
+        await tg_app.initialize()
+        await tg_app.start()
+        await tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("🤖 Poster Invoice Bot v2 запущен...")
+
+        # ── Run forever ───────────────────────────────────────────────────────
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await tg_app.updater.stop()
+            await tg_app.stop()
+            await tg_app.shutdown()
+            await runner.cleanup()
+
+    asyncio.run(run_all())
 
 
 if __name__ == "__main__":

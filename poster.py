@@ -64,6 +64,41 @@ def get_storages() -> list[dict]:
     return result
 
 
+def get_products() -> list[dict]:
+    """Returns list of all menu products with id and name."""
+    resp = _get("menu.getProducts")
+    items = resp.get("response", [])
+    result = []
+    for item in items:
+        result.append({
+            "id":   item.get("product_id"),
+            "name": item.get("product_name", ""),
+        })
+    return result
+
+
+def create_incoming_order(spot_id: int, phone: str, products: list[dict], comment: str = "") -> dict:
+    """
+    Create a customer incoming order in Poster (WhatsApp / delivery).
+    products: list of {"product_id": int, "count": int}
+    """
+    payload: dict = {
+        "spot_id":  spot_id,
+        "phone":    phone,
+        "products": [
+            {
+                "product_id":     p["product_id"],
+                "modificator_id": p.get("modificator_id"),
+                "count":          p["count"],
+            }
+            for p in products
+        ],
+    }
+    if comment:
+        payload["comment"] = comment
+    return _post("incomingOrders.createIncomingOrder", payload)
+
+
 def create_supply(supplier_id: int, storage_id: int, items: list[dict], comment: str = "") -> dict:
     """
     Create a supply (приход) in Poster.
