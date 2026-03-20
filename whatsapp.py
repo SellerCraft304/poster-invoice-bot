@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 WA_VERIFY_TOKEN = os.environ.get("WA_VERIFY_TOKEN", "sushihouse2024")
 # Poster spot_id for delivery/WhatsApp orders (set POSTER_SPOT_ID in Railway env)
-POSTER_SPOT_ID = int(os.environ.get("POSTER_SPOT_ID", "1"))
+POSTER_SPOT_ID = int(os.environ.get("POSTER_SPOT_ID") or "1")
 
 
 async def handle_get(request: web.Request) -> web.Response:
